@@ -1,11 +1,11 @@
+
 import os
-from typing import Optional
 from uuid import UUID
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Response
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -15,22 +15,7 @@ SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY", "")
 if not SUPABASE_URL or not SUPABASE_API_KEY:
     raise RuntimeError("Missing Supabase environment variables")
 
-TABLE_URL = f"{SUPABASE_URL}/rest/v1/Data"
-
-STORAGE_BUCKET = "Swar-Manthan%20Bucket"
-
-def add_image_url(record):
-    if record and record.get("Image"):
-        path = record["Image"].lstrip("/")
-
-        record["Image_URL"] = (
-            f"{SUPABASE_URL}/storage/v1/object/public/"
-            f"{STORAGE_BUCKET}/{path}"
-        )
-
-    return record
-
-app = FastAPI(title="Swar-Manthan API")
+REST_URL = f"{SUPABASE_URL}/rest/v1"
 
 HEADERS = {
     "apikey": SUPABASE_API_KEY,
@@ -38,33 +23,28 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
+app = FastAPI(title="Swar-Manthan API")
 
-class DataCreate(BaseModel):
-    Image: Optional[str] = None
-    H1: list[str] = Field(default_factory=list)
-    H2: list[str] = Field(default_factory=list)
-    H3: list[str] = Field(default_factory=list)
-    H6: list[str] = Field(default_factory=list)
-
-
-class DataUpdate(BaseModel):
-    Image: Optional[str] = None
-    H1: Optional[list[str]] = None
-    H2: Optional[list[str]] = None
-    H3: Optional[list[str]] = None
-    H6: Optional[list[str]] = None
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://swarmanthan.vercel.app",
+        "http://localhost:5173",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 
-async def supabase_request(method, params=None, body=None):
+async def supabase_request(url, method="GET", params=None, body=None):
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.request(
                 method,
-                TABLE_URL,
-                headers={
-                    **HEADERS,
-                    "Prefer": "return=representation",
-                },
+                url,
+                headers=HEADERS,
                 params=params,
                 json=body,
             )
@@ -91,71 +71,86 @@ async def supabase_request(method, params=None, body=None):
 def home():
     return {"message": "Swar-Manthan API is running"}
 
-
-# READ all records
-@app.get("/data")
-async def get_all_data():
-    rows = await supabase_request(
-        "GET",
-        params={"select": "*", "order": "ID.asc"},
+# 1. GET ALL EVENTS
+@app.get("/api/events")
+async def get_all_events():
+    return await supabase_request(
+        f"{REST_URL}/Events",
+        params={
+            "select": "*",
+            "order": "Date.asc",
+        },
     )
 
-    return [add_image_url(row) for row in rows]
 
-
-# READ one record using UUID
-@app.get("/data/{record_id}")
-async def get_data(record_id: UUID):
+# 2. GET INDIVIDUAL EVENT BY UUID
+@app.get("/api/events/{event_id}")
+async def get_event_by_id(event_id: UUID):
     rows = await supabase_request(
-        "GET",
-        params={"select": "*", "ID": f"eq.{record_id}"},
-    )
-
-    if not rows:
-        raise HTTPException(status_code=404, detail="Record not found")
-
-    return add_image_url(rows[0])
-
-
-# CREATE a record
-@app.post("/data", status_code=201)
-async def create_data(record: DataCreate):
-    rows = await supabase_request(
-        "POST",
-        body=record.model_dump(),
-    )
-    return rows[0] if rows else {}
-
-
-# UPDATE a record using UUID
-@app.put("/data/{record_id}")
-async def update_data(record_id: UUID, record: DataUpdate):
-    updates = record.model_dump(exclude_unset=True)
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields provided")
-
-    rows = await supabase_request(
-        "PATCH",
-        params={"ID": f"eq.{record_id}"},
-        body=updates,
+        f"{REST_URL}/Events",
+        params={
+            "select": "*",
+            "ID": f"eq.{event_id}",
+        },
     )
 
     if not rows:
-        raise HTTPException(status_code=404, detail="Record not found")
+        raise HTTPException(status_code=404, detail="Event not found")
 
     return rows[0]
 
 
-# DELETE a record using UUID
-@app.delete("/data/{record_id}", status_code=204)
-async def delete_data(record_id: UUID):
+# 4. GET ALL JOURNEY
+@app.get("/api/journey")
+async def get_all_journey():
+    return await supabase_request(
+        f"{REST_URL}/Journey",
+        params={
+            "select": "*",
+            "order": "Date.asc",
+        },
+    )
+
+
+# 5. GET INDIVIDUAL JOURNEY BY UUID
+@app.get("/api/journey/{journey_id}")
+async def get_journey_by_id(journey_id: UUID):
     rows = await supabase_request(
-        "DELETE",
-        params={"ID": f"eq.{record_id}"},
+        f"{REST_URL}/Journey",
+        params={
+            "select": "*",
+            "ID": f"eq.{journey_id}",
+        },
     )
 
     if not rows:
-        raise HTTPException(status_code=404, detail="Record not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Journey record not found",
+        )
 
-    return Response(status_code=204)
+    return rows[0]
+
+
+# 6. GET ALL TEAM
+@app.get("/api/team")
+async def get_all_team():
+    return await supabase_request(
+        f"{REST_URL}/Team",
+        params={
+            "select": "*",
+            "order": "Created_At.asc",
+        },
+    )
+
+
+# 7. GET ALL VIDEOS
+@app.get("/api/videos")
+async def get_all_videos():
+    return await supabase_request(
+        f"{REST_URL}/Videos",
+        params={
+            "select": "*",
+            "order": "Created_At.desc",
+        },
+    )
